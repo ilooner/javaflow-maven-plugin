@@ -17,7 +17,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  * 
  */
-package meme.singularsyntax.mojo;
+package com.topekalabs.maven.javaflow;
 
 import com.google.common.collect.Lists;
 import com.topekalabs.java.utils.ClassUtils;
