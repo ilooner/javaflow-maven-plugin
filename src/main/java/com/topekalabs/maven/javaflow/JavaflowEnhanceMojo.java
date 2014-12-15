@@ -33,151 +33,65 @@ import org.apache.commons.io.FileUtils;
 import org.apache.commons.javaflow.bytecode.transformation.ResourceTransformer;
 import org.apache.commons.javaflow.bytecode.transformation.asm.AsmClassTransformer;
 import org.apache.commons.javaflow.utils.RewritingUtils;
-import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.logging.Log;
-import org.apache.maven.project.MavenProject;
 
 /**
- * Maven goal that enhances Java class files with Javaflow instrumentation.
- *
- * http://commons.apache.org/sandbox/javaflow/
- *
- * Usage: Create the files
- *
- * ${project}/src/main/javaflow/classes ${project}/src/test/javaflow/classes
- *
- * that list, one per line, the fully-qualified Java package path to the main
- * and test class files that should be bytecode-enhanced for Javaflow, for
- * example:
- *
- * meme/singularsyntax/ojos/MojoMan.class meme/singularsyntax/ojos/PojoPan.class
- * meme/singularsyntax/ojos/RojoRon.class
- * meme/singularsyntax/ojos/RojoRon$SomeInner.class
- * meme/singularsyntax/ojos/RojoRon$AnotherInner.class
- *
- * Note that inner classes compile to separate class files and must be included
- * individually. It is only necessary to include those inner classes which call
- * Javaflow API methods or are in the call graph between other classes which do.
- *
- * When the goal executes, the indicated class files are enhanced with Javaflow
- * bytecode. Backups of the original classes are made in the
- *
- * ${project.build.directory}/javaflow/orig-classes
- * ${project.build.directory}/javaflow/orig-test-classes
- *
- * directories: The goal can be executed with the following command:
- *
- * mvn javaflow:enhance
- *
- * To bind the goal to a project's build, add the following to pom.xml:
- *
- * <build>
- * <plugins>
- * <plugin>
- * <groupId>meme.singularsyntax.java</groupId>
- * <artifactId>javaflow-maven-plugin</artifactId>
- * <version>1.0-SNAPSHOT</version>
- * <executions>
- * <execution>
- * <phase>process-classes</phase>
- * <goals>
- * <goal>enhance</goal>
- * </goals>
- * </execution>
- * </executions>
- * </plugin>
- * </plugins>
- * </build>
- *
- * @goal instrument
- *
- * @phase process-classes
- *
- * @requiresDependencyResolution compile
- *
+ * 
  */
-public class JavaflowEnhanceMojo extends AbstractMojo
+public abstract class JavaflowEnhanceMojo extends AbstractMojo
 {
+    public static final String CLASSFILE_REWRITE_TEMPLATE = "%s.JAVAFLOW_INSTRUMENTED";
 
-    private static final String CLASSFILE_REWRITE_TEMPLATE = "%s.JAVAFLOW_INSTRUMENTED";
-
-    /**
-     * @parameter expression="${project}"
-     * @required
-     * @readonly
-     */
-    private MavenProject project;
-    
-    /**
-     * mainBackupDir
-     *
-     * @parameter default-value="${project.build.directory}/javaflow/main"
-     */
-    private File mainBackupDirectory;
-    
-    /**
-     * testBackupDir
-     * 
-     * @parameter default-value="${project.build.directory}/javaflow/test"
-     */
-    private File testBackupDirectory;
-    
-    /**
-     * mainClassNames
-     * 
-     * @parameter
-     */
-    private List<String> mainClassNames;
-
-    
-    /**
-     * testClassNames
-     * 
-     * @parameter
-     */
-    private List<String> testClassNames;
+    protected abstract List<String> getClassNames();
+    protected abstract File getBackupDirectory();
+    protected abstract File getOutputDirectory();
+    protected abstract String getMessage();
+    protected abstract List<String> getClasspathElements() throws MojoExecutionException;
     
     @Override
     public void execute() throws MojoExecutionException
     {
         prepareClasspath();
         
-        File mainOutputDirectory = new File(project.getBuild().getOutputDirectory());
-        File testOutputDirectory = new File(project.getBuild().getTestOutputDirectory());
-
-        executeHelper(mainOutputDirectory,
-                      mainBackupDirectory,
-                      mainClassNames);
+        File baseDirectory = getOutputDirectory();
+        File backupDirectory = getBackupDirectory();
+        List<String> classNames = getClassNames();
+        String message = getMessage();
         
-        executeHelper(testOutputDirectory,
-                      testBackupDirectory,
-                      testClassNames);
-    }
-    
-    private void executeHelper(File baseDirectory,
-                               File backupDirectory,
-                               List<String> classNames) throws
-                               MojoExecutionException
-    {
-        if(classNames.isEmpty())
+        if(classNames == null ||
+           classNames.isEmpty())
         {
+            getLog().info("No " + message + " to instrument");
             return;
         }
+        
+        if(!baseDirectory.exists())
+        {
+            getLog().error("The " + message + " have not been compiled yet.");
+            return;
+        }
+        
+        getLog().info("Preparing to instrument " +
+                      classNames.size() + " " +
+                      message);
         
         List<File> classFiles = Lists.newArrayList();
         
         for(String className: classNames)
         {
+            getLog().info("Preparing to scan for: " + className);
             if(ClassUtils.isClassName(className))
             {
+                getLog().info("This is a class: " + className);
                 Collection<File> tempClassFiles = ClassUtils.getClassAndInnerClassFiles(baseDirectory,
                                                                                         className);
                 classFiles.addAll(tempClassFiles);
             }
             else if(ClassUtils.isFQClassName(className))
             {
+                getLog().info("This is a fq class: " + className);
                 Collection<File> tempClassFiles = ClassUtils.getFQClassAndInnerClassFiles(baseDirectory,
                                                                                           className);
                 classFiles.addAll(tempClassFiles);
@@ -190,11 +104,13 @@ public class JavaflowEnhanceMojo extends AbstractMojo
             }
         }
         
+        getLog().info("Instrumenting " + classFiles.size() + " class files.");
+        
         instrumentClassFiles(baseDirectory,
                              backupDirectory,
                              classFiles);
     }
-
+    
     private void instrumentClassFiles(File baseDirectory,
                                       File backupDirectory,
                                       List<File> classFiles) throws MojoExecutionException
@@ -219,7 +135,7 @@ public class JavaflowEnhanceMojo extends AbstractMojo
                 }
 
                 log.info(String.format("Enhancing class file bytecode for Javaflow: %s",
-                                       classFile));
+                                        classFile));
                 RewritingUtils.rewriteClassFile(classFile,
                                                 transformer,
                                                 instrumentedClassFile);
@@ -231,13 +147,13 @@ public class JavaflowEnhanceMojo extends AbstractMojo
                     backupClassFile.delete();
                 }
 
-                log.debug(String.format("Renaming original class file from %s to %s",
+                log.info(String.format("Renaming original class file from %s to %s",
                                         classFile,
                                         backupClassFile));
                 FileUtils.moveFile(classFile,
                                    backupClassFile);
 
-                log.debug(String.format("Renaming rewritten class file from %s to %s",
+                log.info(String.format("Renaming rewritten class file from %s to %s",
                                         instrumentedClassFile,
                                         classFile));
                 
@@ -260,12 +176,16 @@ public class JavaflowEnhanceMojo extends AbstractMojo
 
         try
         {
-            runtimeClasspathElements = project.getCompileClasspathElements();
+            runtimeClasspathElements = getClasspathElements();
             URL[] runtimeUrls = new URL[runtimeClasspathElements.size()];
 
+            getLog().debug("Number of runtime classpath elements " +
+                           runtimeClasspathElements.size());
+            
             for(int ii = 0; ii < runtimeClasspathElements.size(); ii++)
             {
                 String element = runtimeClasspathElements.get(ii);
+                getLog().debug("runtime classpath element " + element);
                 File elementFile = new File(element);
                 runtimeUrls[ii] = elementFile.toURI().toURL();
             }
@@ -273,10 +193,6 @@ public class JavaflowEnhanceMojo extends AbstractMojo
             classLoader = new URLClassLoader(runtimeUrls, Thread.currentThread().getContextClassLoader());
             Thread.currentThread().setContextClassLoader(classLoader);
 
-        }
-        catch(DependencyResolutionRequiredException e)
-        {
-            throw new MojoExecutionException(e.getMessage());
         }
         catch(MalformedURLException e)
         {
